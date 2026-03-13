@@ -4,7 +4,7 @@ import {
   Line, ComposedChart, Cell
 } from 'recharts';
 import ExcelJS from 'exceljs';
-import { Clock, Database, Activity, Download, Calendar, Users, Cpu, AlertTriangle, CheckCircle2, BarChart3, TrendingUp, Grid, Save } from 'lucide-react';
+import { Clock, Database, Activity, Download, Calendar, Users, Cpu, AlertTriangle, CheckCircle2, BarChart3, TrendingUp, Grid, Save, X } from 'lucide-react';
 import { formatNumber, cn, sortTeams } from '../utils';
 import { AnalysisResult, ProductionDemand, ProductionResource, SystemSettings } from '../types';
 
@@ -24,8 +24,76 @@ interface Props {
 export default function CapacityAnalysis({ data, demands, resources, settings, filters, onFiltersChange }: Props) {
   const [viewMode, setViewMode] = useState<'dashboard' | 'heatmap'>('dashboard');
   const [heatmapCategory, setHeatmapCategory] = useState<'human' | 'machine'>('human');
+  const [selectedBarData, setSelectedBarData] = useState<{ team: string, month: string } | null>(null);
 
   const { year: selectedYear, month: selectedMonth, team: selectedTeam } = filters;
+
+  // Handle chart click is now handled directly on the Bar component
+
+  const topDemands = useMemo(() => {
+    if (!selectedBarData) return [];
+
+    const { team: targetTeam, month: targetMonth } = selectedBarData;
+    
+    const resourceMap = new Map<string, ProductionResource>();
+    resources.forEach(r => resourceMap.set(r.id, r));
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayTime = today.getTime();
+
+    // Deduplicate demands by orderNo and opNo, keeping only the first occurrence
+    const uniqueDemands: ProductionDemand[] = [];
+    const seenOrderOp = new Set<string>();
+    
+    demands.forEach(demand => {
+      const key = `${demand.orderNo}_${demand.opNo}`;
+      if (!seenOrderOp.has(key)) {
+        seenOrderOp.add(key);
+        uniqueDemands.push(demand);
+      }
+    });
+
+    const processedDemands = uniqueDemands.map(demand => {
+      if (!demand.dueDate) return null;
+      
+      const dueDate = new Date(demand.dueDate);
+      const uncompletedQty = demand.requiredQty - demand.completedQty - (demand.rejectedQty || 0);
+      
+      let targetDate = dueDate;
+      if (uncompletedQty > 0) {
+        const demandDate = new Date(dueDate);
+        demandDate.setHours(0, 0, 0, 0);
+        if (demandDate.getTime() < todayTime) {
+          targetDate = today;
+        }
+      }
+
+      const resource = resourceMap.get(demand.resourceGroupId);
+      const demandTeam = resource ? (resource.team || '其他').trim() : '其他';
+      
+      const actualHours = uncompletedQty <= 0 ? 0 : demand.actualHours;
+      const pendingHours = (uncompletedQty * actualHours) / 60;
+
+      const monthStr = `${targetDate.getFullYear()}年${(targetDate.getMonth() + 1).toString().padStart(2, '0')}月`;
+
+      return {
+        ...demand,
+        demandTeam,
+        monthStr,
+        pendingHours,
+        uncompletedQty
+      };
+    }).filter(Boolean) as (ProductionDemand & { demandTeam: string, monthStr: string, pendingHours: number, uncompletedQty: number })[];
+
+    const filtered = processedDemands.filter(d => {
+      const teamMatch = targetTeam === 'all' || d.demandTeam === targetTeam;
+      const monthMatch = targetMonth === 'all' || d.monthStr === targetMonth;
+      return teamMatch && monthMatch && d.pendingHours > 0;
+    });
+
+    return filtered.sort((a, b) => b.pendingHours - a.pendingHours).slice(0, 10);
+  }, [selectedBarData, demands, resources]);
 
   const setSelectedYear = (year: string) => onFiltersChange({ ...filters, year });
   const setSelectedMonth = (month: string) => onFiltersChange({ ...filters, month });
@@ -50,6 +118,31 @@ export default function CapacityAnalysis({ data, demands, resources, settings, f
   const uniqueTeams = useMemo(() => {
     return sortTeams(Array.from(new Set(data.monthlyTeamData.map(d => d.team))), settings?.teamOrder);
   }, [data.monthlyTeamData, settings?.teamOrder]);
+
+  // Validate and reset filters if they don't exist in current data
+  useEffect(() => {
+    let changed = false;
+    const newFilters = { ...filters };
+
+    if (selectedYear !== 'all' && !uniqueYears.includes(selectedYear)) {
+      newFilters.year = 'all';
+      changed = true;
+    }
+    
+    if (selectedMonth !== 'all' && !uniqueMonths.includes(selectedMonth)) {
+      newFilters.month = 'all';
+      changed = true;
+    }
+
+    if (selectedTeam !== 'all' && !uniqueTeams.includes(selectedTeam)) {
+      newFilters.team = 'all';
+      changed = true;
+    }
+
+    if (changed) {
+      onFiltersChange(newFilters);
+    }
+  }, [uniqueYears, uniqueMonths, uniqueTeams, selectedYear, selectedMonth, selectedTeam, filters, onFiltersChange]);
 
   // Active data for metrics and charts based on viewMode
   const activeData = useMemo(() => {
@@ -174,10 +267,18 @@ export default function CapacityAnalysis({ data, demands, resources, settings, f
   }, [activeData, viewMode, selectedMonth, data.totalWorkingDays]);
 
   const getChartTitle = () => {
+    if (data.monthlyTeamData.length === 0) {
+      return '产能分析看板';
+    }
+
     if (viewMode === 'dashboard') {
       const yearLabel = selectedYear === 'all' ? '全部年份' : `${selectedYear}年`;
-      if (selectedTeam !== 'all') {
-        return `${selectedTeam} - ${yearLabel}月度负荷趋势`;
+      
+      // Use actual valid team for title, even if state hasn't updated yet
+      const actualTeam = selectedTeam !== 'all' && uniqueTeams.includes(selectedTeam) ? selectedTeam : 'all';
+      
+      if (actualTeam !== 'all') {
+        return `${actualTeam} - ${yearLabel}月度负荷趋势`;
       } else {
         if (selectedMonth === 'all') {
           return `${yearLabel}全年 - 各班组产能负荷对比`;
@@ -261,33 +362,91 @@ export default function CapacityAnalysis({ data, demands, resources, settings, f
       addHeatmapSheet('human');
       addHeatmapSheet('machine');
     } else {
-      // Standard Export - Consolidated Data
+      // Standard Export - Transposed Data
       const worksheet = workbook.addWorksheet('产能分析明细');
-      worksheet.columns = [
-        { header: '月份', key: 'month', width: 15 },
-        { header: '班组', key: 'team', width: 20 },
-        { header: '需求工时', key: 'load', width: 15 },
-        { header: '人力可用产能', key: 'humanCap', width: 15 },
-        { header: '人力负荷率', key: 'humanUtil', width: 15 },
-        { header: '设备可用产能', key: 'machineCap', width: 15 },
-        { header: '设备负荷率', key: 'machineUtil', width: 15 },
-      ];
+      
+      const exportMonths = Array.from(new Set(activeData.map(d => d.month))).sort();
+      const exportTeams = sortTeams(Array.from(new Set(activeData.map(d => d.team))), settings?.teamOrder);
 
-      activeData.forEach(item => {
-        worksheet.addRow({
-          month: item.month,
-          team: item.team,
-          load: item.human.load,
-          humanCap: item.human.capacity,
-          humanUtil: `${item.human.utilization.toFixed(1)}%`,
-          machineCap: item.machine.capacity,
-          machineUtil: `${item.machine.utilization.toFixed(1)}%`,
-        });
+      // Header Row
+      const headerRow = ['', '', ...exportMonths.map(m => m.replace(/\d+年/, ''))];
+      const header = worksheet.addRow(headerRow);
+      header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+      header.alignment = { horizontal: 'center', vertical: 'middle' };
+      
+      header.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
       });
 
-      // Style header
-      worksheet.getRow(1).font = { bold: true };
-      worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      let currentRowIndex = 2;
+      exportTeams.forEach(team => {
+        const teamData = activeData.filter(d => d.team === team);
+        
+        const metrics = [
+          { name: '需求工时', key: 'load' },
+          { name: '人力可用产能', key: 'humanCap' },
+          { name: '人力负荷率', key: 'humanUtil' },
+          { name: '设备可用产能', key: 'machineCap' },
+          { name: '设备负荷率', key: 'machineUtil' },
+          { name: '缺口', key: 'gap' },
+        ];
+
+        const startRow = currentRowIndex;
+
+        metrics.forEach(metric => {
+          const rowData: any[] = [team, metric.name];
+          exportMonths.forEach(month => {
+            const monthData = teamData.find(d => d.month === month);
+            if (monthData) {
+              if (metric.key === 'load') rowData.push(Math.round(monthData.human.load));
+              else if (metric.key === 'humanCap') rowData.push(Math.round(monthData.human.capacity));
+              else if (metric.key === 'humanUtil') rowData.push(`${monthData.human.utilization.toFixed(2)}%`);
+              else if (metric.key === 'machineCap') rowData.push(Math.round(monthData.machine.capacity));
+              else if (metric.key === 'machineUtil') rowData.push(`${monthData.machine.utilization.toFixed(2)}%`);
+              else if (metric.key === 'gap') rowData.push(Math.round(monthData.machine.capacity - monthData.human.load));
+            } else {
+              rowData.push('-');
+            }
+          });
+          const row = worksheet.addRow(rowData);
+          
+          row.eachCell((cell, colNumber) => {
+            cell.border = {
+              top: { style: 'thin' },
+              left: { style: 'thin' },
+              bottom: { style: 'thin' },
+              right: { style: 'thin' }
+            };
+            if (colNumber === 1) {
+              cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            } else if (colNumber === 2) {
+              cell.alignment = { horizontal: 'left', vertical: 'middle' };
+            } else {
+              cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            }
+          });
+          
+          currentRowIndex++;
+        });
+
+        worksheet.mergeCells(startRow, 1, currentRowIndex - 1, 1);
+        const teamCell = worksheet.getCell(startRow, 1);
+        teamCell.value = team;
+        teamCell.font = { bold: true };
+        teamCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+
+      worksheet.getColumn(1).width = 15;
+      worksheet.getColumn(2).width = 20;
+      for (let i = 3; i <= exportMonths.length + 2; i++) {
+        worksheet.getColumn(i).width = 12;
+      }
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -653,6 +812,14 @@ export default function CapacityAnalysis({ data, demands, resources, settings, f
                     fill="#3b82f6" 
                     radius={[4, 4, 0, 0]}
                     barSize={30}
+                    onClick={(data: any) => {
+                      if (selectedTeam !== 'all') {
+                        setSelectedBarData({ team: selectedTeam, month: data.originalMonth });
+                      } else {
+                        setSelectedBarData({ team: data.name, month: selectedMonth });
+                      }
+                    }}
+                    cursor="pointer"
                   />
                   <Line 
                     type="monotone" 
@@ -731,7 +898,11 @@ export default function CapacityAnalysis({ data, demands, resources, settings, f
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {activeData.length > 0 ? activeData.map((item, idx) => (
-                  <tr key={`${item.month}-${item.team}-${idx}`} className="hover:bg-slate-50/50 transition-colors group">
+                  <tr 
+                    key={`${item.month}-${item.team}-${idx}`} 
+                    className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+                    onClick={() => setSelectedBarData({ team: item.team, month: item.month })}
+                  >
                     <td className="py-4 px-6 text-sm font-medium text-slate-600">
                       {selectedYear !== 'all' ? item.month.replace(/\d+年/, '') : item.month}
                     </td>
@@ -781,6 +952,85 @@ export default function CapacityAnalysis({ data, demands, resources, settings, f
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Top Demands Modal */}
+      {selectedBarData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[80vh] flex flex-col overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <BarChart3 size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">
+                    {selectedBarData.team !== 'all' ? selectedBarData.team : '全部班组'} 
+                    {selectedBarData.month !== 'all' ? ` - ${selectedBarData.month}` : ' - 全年'} 
+                    生产需求明细
+                  </h3>
+                  <p className="text-sm text-slate-500">需求工时最长的前10个工单</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedBarData(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-0">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50/90 backdrop-blur-md sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider w-16 text-center border-b border-slate-200">排名</th>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">工单号</th>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">组件物料编码</th>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">工序</th>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">交付日期</th>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider text-right border-b border-slate-200">未完成数量</th>
+                    <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider text-right border-b border-slate-200">需求工时(H)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {topDemands.length > 0 ? topDemands.map((demand, idx) => {
+                    const isTop3 = idx < 3;
+                    const rankColors = [
+                      'bg-gradient-to-br from-amber-100 to-amber-50 text-amber-700 border-amber-200 shadow-sm', // 1st
+                      'bg-gradient-to-br from-slate-200 to-slate-100 text-slate-700 border-slate-300 shadow-sm', // 2nd
+                      'bg-gradient-to-br from-orange-100 to-orange-50 text-orange-700 border-orange-200 shadow-sm' // 3rd
+                    ];
+                    const rankColor = isTop3 ? rankColors[idx] : 'bg-slate-50 text-slate-400 border-slate-100';
+                    const rowBg = idx === 0 ? 'bg-amber-50/10' : idx === 1 ? 'bg-slate-50/30' : idx === 2 ? 'bg-orange-50/10' : 'bg-white';
+
+                    return (
+                      <tr key={`${demand.id}-${idx}`} className={cn("group hover:bg-slate-50/80 transition-all duration-200", rowBg)}>
+                        <td className="py-4 px-6 text-center">
+                          <div className={cn("w-7 h-7 mx-auto rounded-full flex items-center justify-center text-xs font-bold border", rankColor)}>
+                            {idx + 1}
+                          </div>
+                        </td>
+                        <td className="py-4 px-6 text-sm font-bold text-slate-800">{demand.orderNo}</td>
+                        <td className="py-4 px-6 text-sm font-mono font-medium text-slate-600">{demand.componentCode}</td>
+                        <td className="py-4 px-6 text-sm text-slate-500">{demand.opDesc}</td>
+                        <td className="py-4 px-6 text-sm text-slate-500 font-mono">{demand.dueDate}</td>
+                        <td className="py-4 px-6 text-sm text-slate-600 text-right font-mono">{formatNumber(demand.uncompletedQty, 0)}</td>
+                        <td className="py-4 px-6 text-sm font-bold text-blue-600 text-right font-mono">{formatNumber(demand.pendingHours, 2)}</td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-slate-400 text-sm">
+                        暂无需求数据
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

@@ -291,7 +291,19 @@ export default function App() {
     const dailyLoadMap = new Map<string, number>(); // key: "YYYY-MM-DD_team"
     const monthlyTeamMap = new Map<string, MonthlyTeamAnalysis>();
 
+    // Deduplicate demands by orderNo and opNo, keeping only the first occurrence
+    const uniqueDemands: ProductionDemand[] = [];
+    const seenOrderOp = new Set<string>();
+    
     demands.forEach(demand => {
+      const key = `${demand.orderNo}_${demand.opNo}`;
+      if (!seenOrderOp.has(key)) {
+        seenOrderOp.add(key);
+        uniqueDemands.push(demand);
+      }
+    });
+
+    uniqueDemands.forEach(demand => {
       if (!demand.dueDate) return;
       
       const dueDate = new Date(demand.dueDate);
@@ -1637,19 +1649,60 @@ export default function App() {
       case 'settings':
         return (
           <div className="max-w-5xl mx-auto space-y-8">
-            <div className="flex items-end justify-between mb-2">
+            <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-3xl font-bold text-slate-900 tracking-tight">系统设置</h2>
               </div>
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-400 bg-slate-100 px-3 py-1.5 rounded-full">
-                <Shield size={12} />
-                <span>数据已加密存储于浏览器本地</span>
-              </div>
+              <button
+                onClick={() => {
+                  addNotification('success', '系统配置已成功保存并应用');
+                  setActiveTab('analysis');
+                }}
+                className="flex items-center gap-2 bg-slate-900 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-slate-900/20 hover:bg-slate-800 transition-all active:scale-95 group text-sm"
+              >
+                <Save size={16} className="group-hover:scale-110 transition-transform" />
+                保存所有配置
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 items-start gap-6">
+              {/* 班组排序设置 */}
+              <div className="glass-card p-6 lg:col-span-2">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-sm">
+                    <ListOrdered size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900">班组展示优先级</h3>
+                    <p className="text-xs text-slate-500">自定义班组在图表和表格中的显示顺序（从高到低，每行一个班组）</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <DraggableTeamList 
+                      teams={settings.teamOrder || DEFAULT_TEAM_ORDER}
+                      onChange={(newOrder) => setSettings({ ...settings, teamOrder: newOrder })}
+                    />
+                    <p className="text-[11px] text-slate-400 mt-2 flex items-center gap-1">
+                      <AlertCircle size={12} />
+                      提示：系统会根据上述关键词匹配班组名称。未匹配到的班组将按拼音顺序排在最后。
+                    </p>
+                  </div>
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={() => setSettings({ ...settings, teamOrder: DEFAULT_TEAM_ORDER })}
+                      className="text-xs text-indigo-600 hover:text-indigo-700 font-medium transition-colors flex items-center gap-1"
+                    >
+                      <RotateCcw size={12} />
+                      恢复默认排序
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* 数据与安全 */}
-              <div className="glass-card p-6">
+              <div className="glass-card p-6 lg:col-span-1">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-sm">
                     <Database size={20} />
@@ -1693,54 +1746,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 班组排序设置 */}
-              <div className="glass-card p-6 md:col-span-2">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-sm">
-                    <ListOrdered size={20} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900">班组展示优先级</h3>
-                    <p className="text-xs text-slate-500">自定义班组在图表和表格中的显示顺序（从高到低，每行一个班组）</p>
-                  </div>
-                </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <DraggableTeamList 
-                      teams={settings.teamOrder || DEFAULT_TEAM_ORDER}
-                      onChange={(newOrder) => setSettings({ ...settings, teamOrder: newOrder })}
-                    />
-                    <p className="text-[11px] text-slate-400 mt-2 flex items-center gap-1">
-                      <AlertCircle size={12} />
-                      提示：系统会根据上述关键词匹配班组名称。未匹配到的班组将按拼音顺序排在最后。
-                    </p>
-                  </div>
-                  <div className="flex justify-end">
-                    <button 
-                      onClick={() => setSettings({ ...settings, teamOrder: DEFAULT_TEAM_ORDER })}
-                      className="text-xs text-indigo-600 hover:text-indigo-700 font-medium transition-colors flex items-center gap-1"
-                    >
-                      <RotateCcw size={12} />
-                      恢复默认排序
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
-            <div className="flex justify-center pt-4">
-              <button
-                onClick={() => {
-                  addNotification('success', '系统配置已成功保存并应用');
-                  setActiveTab('analysis');
-                }}
-                className="flex items-center gap-2 bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold shadow-xl shadow-slate-900/20 hover:bg-slate-800 transition-all active:scale-95 group"
-              >
-                <Save size={20} className="group-hover:scale-110 transition-transform" />
-                保存所有配置
-              </button>
             </div>
           </div>
         );

@@ -2,18 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
-  ChevronRight, 
-  Check, 
-  X, 
-  RotateCcw, 
-  Info,
-  CalendarCheck,
-  CalendarX,
-  Zap
+  ChevronRight
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../utils';
 import { SystemSettings } from '../types';
+import { CalendarMonth } from './ProductionCalendar/CalendarMonth';
 
 interface ProductionCalendarProps {
   settings: SystemSettings;
@@ -30,28 +22,25 @@ export default function ProductionCalendar({ settings, onSettingsChange }: Produ
         index: i,
         name: date.toLocaleString('zh-CN', { month: 'long' }),
         daysInMonth: new Date(selectedYear, i + 1, 0).getDate(),
-        firstDayOfWeek: date.getDay() // 0 is Sunday
+        firstDayOfWeek: date.getDay()
       };
     });
   }, [selectedYear]);
 
   const isWorkingDay = (year: number, month: number, day: number) => {
-    const date = new Date(year, month, day);
     const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     
-    // Check manual overrides first
     if (settings.calendarOverrides?.[dateKey] !== undefined) {
       return settings.calendarOverrides[dateKey];
     }
     
-    // Default rules: 单休 (Sunday is rest)
+    const date = new Date(year, month, day);
     const dayOfWeek = date.getDay();
     const isSunday = dayOfWeek === 0;
     
     let isRest = false;
     if (isSunday) isRest = true;
     
-    // Check custom holidays (legacy support)
     if (settings.customHolidays?.includes(dateKey)) isRest = true;
     
     return !isRest;
@@ -97,10 +86,8 @@ export default function ProductionCalendar({ settings, onSettingsChange }: Produ
       if (type === 'all-working') {
         newOverrides[dateKey] = true;
       } else if (type === 'weekends-single') {
-        // 单休: Sunday rest, Saturday working
         newOverrides[dateKey] = !isSunday;
       } else if (type === 'weekends-double') {
-        // 双休: Weekend rest
         newOverrides[dateKey] = !isWeekend;
       }
     }
@@ -109,21 +96,6 @@ export default function ProductionCalendar({ settings, onSettingsChange }: Produ
       ...settings,
       calendarOverrides: newOverrides
     });
-  };
-
-  const resetYear = () => {
-    if (window.confirm(`确定要重置 ${selectedYear} 年的所有手动修改吗？`)) {
-      const newOverrides = { ...(settings.calendarOverrides || {}) };
-      Object.keys(newOverrides).forEach(key => {
-        if (key.startsWith(`${selectedYear}-`)) {
-          delete newOverrides[key];
-        }
-      });
-      onSettingsChange({
-        ...settings,
-        calendarOverrides: newOverrides
-      });
-    }
   };
 
   return (
@@ -163,82 +135,17 @@ export default function ProductionCalendar({ settings, onSettingsChange }: Produ
 
       {/* Calendar Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-        {months.map((month, mIdx) => {
-          const stats = getMonthlyStats(mIdx);
-          return (
-            <motion.div 
-              key={month.name}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: mIdx * 0.05 }}
-              className="glass-card overflow-hidden flex flex-col"
-            >
-              <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
-                <h4 className="font-bold text-slate-800">{month.name}</h4>
-                <div className="text-right">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">工作天数</p>
-                  <p className="text-sm font-black text-blue-600">{stats.workingDays} 天</p>
-                </div>
-              </div>
-              
-              <div className="p-4 flex-1">
-                <div className="grid grid-cols-7 gap-1 mb-2">
-                  {['日', '一', '二', '三', '四', '五', '六'].map(d => (
-                    <div key={d} className="text-center text-[10px] font-bold text-slate-400 py-1">
-                      {d}
-                    </div>
-                  ))}
-                </div>
-                
-                <div className="grid grid-cols-7 gap-1">
-                  {/* Empty slots for first week */}
-                  {Array.from({ length: month.firstDayOfWeek }).map((_, i) => (
-                    <div key={`empty-${i}`} className="aspect-square" />
-                  ))}
-                  
-                  {/* Days */}
-                  {Array.from({ length: month.daysInMonth }).map((_, i) => {
-                    const day = i + 1;
-                    const working = isWorkingDay(selectedYear, mIdx, day);
-                    return (
-                      <button
-                        key={day}
-                        onClick={() => toggleDay(selectedYear, mIdx, day)}
-                        className={cn(
-                          "aspect-square rounded-lg flex flex-col items-center justify-center transition-all relative group",
-                          working 
-                            ? "bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100" 
-                            : "bg-slate-50 text-slate-400 border border-slate-100 hover:bg-slate-100"
-                        )}
-                      >
-                        <span className="text-xs font-bold">{day}</span>
-                        <div className={cn(
-                          "w-1 h-1 rounded-full mt-0.5 transition-all",
-                          working ? "bg-blue-500 scale-100" : "bg-transparent scale-0"
-                        )} />
-                        
-                        {/* Checkbox indicator */}
-                        <div className={cn(
-                          "absolute top-1 right-1 w-3 h-3 rounded-sm border flex items-center justify-center transition-all",
-                          working 
-                            ? "bg-blue-500 border-blue-500" 
-                            : "bg-white border-slate-200 opacity-0 group-hover:opacity-100"
-                        )}>
-                          {working && <Check size={8} className="text-white" strokeWidth={4} />}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="p-3 border-t border-slate-100 flex items-center justify-center gap-2 bg-slate-50/30">
-                <button onClick={() => batchAction('weekends-single', mIdx)} className="text-[10px] bg-white border border-slate-200 px-2 py-1 rounded hover:border-blue-300">单休</button>
-                <button onClick={() => batchAction('weekends-double', mIdx)} className="text-[10px] bg-white border border-slate-200 px-2 py-1 rounded hover:border-blue-300">双休</button>
-                <button onClick={() => batchAction('all-working', mIdx)} className="text-[10px] bg-white border border-slate-200 px-2 py-1 rounded hover:border-blue-300">无休</button>
-              </div>
-            </motion.div>
-          );
-        })}
+        {months.map((month, mIdx) => (
+          <CalendarMonth
+            key={month.name}
+            month={month}
+            selectedYear={selectedYear}
+            isWorkingDay={isWorkingDay}
+            toggleDay={toggleDay}
+            batchAction={batchAction}
+            stats={getMonthlyStats(mIdx)}
+          />
+        ))}
       </div>
     </div>
   );

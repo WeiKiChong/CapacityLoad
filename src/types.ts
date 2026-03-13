@@ -1,3 +1,9 @@
+export interface Notification {
+  id: number;
+  type: 'success' | 'error' | 'info';
+  message: string;
+}
+
 export interface ProductionDemand {
   id: string;
   orderNo: string;
@@ -31,14 +37,17 @@ export interface ProductionDemand {
 
 export interface ProductionResource {
   id: string;
+  name: string;
+  type: 'people' | 'machine';
   groupName: string;
-  team: string;
-  workshop: string;
+  capacity: number;
+  team?: string;
+  workshop?: string;
   original?: {
-    id: string;
+    name: string;
+    type: 'people' | 'machine';
     groupName: string;
-    team: string;
-    workshop: string;
+    capacity: number;
   };
 }
 
@@ -108,3 +117,6 @@ export interface SystemSettings {
   calendarOverrides?: { [date: string]: boolean };
   teamOrder?: string[];
 }
+
+export type Demand = ProductionDemand;
+export type Resource = ProductionResource;
